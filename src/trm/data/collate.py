@@ -24,8 +24,10 @@ def arc_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
             - train_outputs: Tensor (B, max_pairs, max_H, max_W) padded
             - test_inputs: Tensor (B, max_pairs, max_H, max_W) padded
             - test_outputs: Tensor (B, max_pairs, max_H, max_W) padded
-            - train_masks: Tensor (B, max_pairs, max_H, max_W) bool - True for valid
-            - test_masks: Tensor (B, max_pairs, max_H, max_W) bool - True for valid
+            - train_input_masks: Tensor (B, max_pairs, max_H, max_W) bool - True for valid input positions
+            - train_output_masks: Tensor (B, max_pairs, max_H, max_W) bool - True for valid output positions
+            - test_input_masks: Tensor (B, max_pairs, max_H, max_W) bool - True for valid input positions
+            - test_output_masks: Tensor (B, max_pairs, max_H, max_W) bool - True for valid output positions
             - num_train_pairs: Tensor (B,) - actual train pair count per task
             - num_test_pairs: Tensor (B,) - actual test pair count per task
     """
@@ -74,11 +76,17 @@ def arc_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         dtype=torch.long,
     )
 
-    # Initialize masks (False = padded, True = valid)
-    train_masks = torch.zeros(
+    # Initialize separate masks for inputs and outputs (False = padded, True = valid)
+    train_input_masks = torch.zeros(
         (batch_size, max_train_pairs, max_train_h, max_train_w), dtype=torch.bool
     )
-    test_masks = torch.zeros(
+    train_output_masks = torch.zeros(
+        (batch_size, max_train_pairs, max_train_h, max_train_w), dtype=torch.bool
+    )
+    test_input_masks = torch.zeros(
+        (batch_size, max_test_pairs, max_test_h, max_test_w), dtype=torch.bool
+    )
+    test_output_masks = torch.zeros(
         (batch_size, max_test_pairs, max_test_h, max_test_w), dtype=torch.bool
     )
 
@@ -98,13 +106,10 @@ def arc_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
             h_out, w_out = out.shape
 
             train_inputs[b, p, :h_in, :w_in] = inp
-            train_masks[b, p, :h_in, :w_in] = True
+            train_input_masks[b, p, :h_in, :w_in] = True
 
             train_outputs[b, p, :h_out, :w_out] = out
-            # Note: train_masks covers the union of input/output extents
-            # For simplicity, we use the same mask for both
-            # The mask indicates which positions have valid data
-            train_masks[b, p, :h_out, :w_out] = True
+            train_output_masks[b, p, :h_out, :w_out] = True
 
         # Test pairs
         num_test = len(item["test_inputs"])
@@ -116,10 +121,10 @@ def arc_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
             h_out, w_out = out.shape
 
             test_inputs[b, p, :h_in, :w_in] = inp
-            test_masks[b, p, :h_in, :w_in] = True
+            test_input_masks[b, p, :h_in, :w_in] = True
 
             test_outputs[b, p, :h_out, :w_out] = out
-            test_masks[b, p, :h_out, :w_out] = True
+            test_output_masks[b, p, :h_out, :w_out] = True
 
     return {
         "task_ids": task_ids,
@@ -127,8 +132,13 @@ def arc_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "train_outputs": train_outputs,
         "test_inputs": test_inputs,
         "test_outputs": test_outputs,
-        "train_masks": train_masks,
-        "test_masks": test_masks,
+        "train_input_masks": train_input_masks,
+        "train_output_masks": train_output_masks,
+        "test_input_masks": test_input_masks,
+        "test_output_masks": test_output_masks,
+        # Keep combined masks for backward compatibility (union of input/output)
+        "train_masks": train_input_masks | train_output_masks,
+        "test_masks": test_input_masks | test_output_masks,
         "num_train_pairs": num_train_pairs,
         "num_test_pairs": num_test_pairs,
     }
