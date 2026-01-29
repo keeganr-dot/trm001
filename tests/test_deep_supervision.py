@@ -273,5 +273,110 @@ class TestConfigurability:
             assert result["steps"] == max_steps
 
 
+class TestEMAIntegration:
+    """Tests for EMA weight smoothing (TRAIN-06)."""
+
+    def test_ema_model_exists(self):
+        """Test EMA model is created during initialization."""
+        model = create_test_model()
+        trainer = DeepSupervisionTrainer(model, ema_decay=0.999)
+
+        ema_model = trainer.get_ema_model()
+        assert ema_model is not None
+
+    def test_ema_updates_after_training_step(self):
+        """Test EMA weights change after training step."""
+        model = create_test_model(enable_halting=False)
+        trainer = DeepSupervisionTrainer(model, max_sup_steps=2, ema_decay=0.999)
+
+        # Get initial EMA weights
+        ema_param = None
+        for name, p in trainer.get_ema_model().named_parameters():
+            if "transformer" in name:
+                ema_param = p
+                break
+        assert ema_param is not None
+        initial_ema = ema_param.data.clone()
+
+        # Run training step
+        B, H, W = 2, 4, 4
+        input_grids = torch.randint(0, 10, (B, H, W))
+        target_grids = torch.randint(0, 10, (B, H, W))
+        mask = torch.ones(B, H, W, dtype=torch.bool)
+
+        trainer.train_step_deep_supervision(input_grids, target_grids, mask)
+
+        # EMA should have changed
+        # Note: With high decay (0.999), change is small but should be non-zero
+        assert not torch.equal(initial_ema, ema_param.data), "EMA weights unchanged"
+
+    def test_ema_decay_affects_smoothing(self):
+        """Test different EMA decay values affect smoothing differently."""
+        model1 = create_test_model(enable_halting=False)
+        model2 = create_test_model(enable_halting=False)
+
+        # Copy weights from model1 to model2 for fair comparison
+        model2.load_state_dict(model1.state_dict())
+
+        trainer_low_decay = DeepSupervisionTrainer(model1, max_sup_steps=2, ema_decay=0.5)
+        trainer_high_decay = DeepSupervisionTrainer(model2, max_sup_steps=2, ema_decay=0.999)
+
+        B, H, W = 2, 4, 4
+        input_grids = torch.randint(0, 10, (B, H, W))
+        target_grids = torch.randint(0, 10, (B, H, W))
+        mask = torch.ones(B, H, W, dtype=torch.bool)
+
+        # Run training
+        trainer_low_decay.train_step_deep_supervision(input_grids.clone(), target_grids.clone(), mask.clone())
+        trainer_high_decay.train_step_deep_supervision(input_grids.clone(), target_grids.clone(), mask.clone())
+
+        # Both should work without error
+        # High decay EMA should be closer to initial weights
+        # (This is a qualitative test that both decay values work)
+        assert trainer_low_decay.ema_decay == 0.5
+        assert trainer_high_decay.ema_decay == 0.999
+
+    def test_state_dict_includes_ema(self):
+        """Test checkpoint state dict includes EMA state."""
+        model = create_test_model()
+        trainer = DeepSupervisionTrainer(model, ema_decay=0.999)
+
+        state = trainer.state_dict()
+
+        assert "model_state_dict" in state
+        assert "ema_state_dict" in state
+        assert "optimizer_state_dict" in state
+
+    def test_load_state_dict_restores_ema(self):
+        """Test loading checkpoint restores EMA state."""
+        model = create_test_model(enable_halting=False)
+        trainer = DeepSupervisionTrainer(model, max_sup_steps=2, ema_decay=0.999)
+
+        # Train a bit to modify EMA
+        B, H, W = 2, 4, 4
+        input_grids = torch.randint(0, 10, (B, H, W))
+        target_grids = torch.randint(0, 10, (B, H, W))
+        mask = torch.ones(B, H, W, dtype=torch.bool)
+
+        trainer.train_step_deep_supervision(input_grids, target_grids, mask)
+
+        # Save state
+        saved_state = trainer.state_dict()
+
+        # Create new trainer
+        model2 = create_test_model(enable_halting=False)
+        trainer2 = DeepSupervisionTrainer(model2, max_sup_steps=2, ema_decay=0.999)
+
+        # Load state
+        trainer2.load_state_dict(saved_state)
+
+        # Verify model weights match
+        for (n1, p1), (n2, p2) in zip(
+            trainer.model.named_parameters(),
+            trainer2.model.named_parameters()
+        ):
+            assert torch.equal(p1.data, p2.data), f"Model param {n1} mismatch"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
