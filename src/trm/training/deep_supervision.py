@@ -51,11 +51,12 @@ class DeepSupervisionTrainer(TRMTrainer):
         self.ema_decay = ema_decay
 
         # EMA model for weight smoothing (TRAIN-06)
-        self.ema = AveragedModel(
-            model,
-            multi_avg_fn=lambda averaged, current, num_averaged:
-                ema_decay * averaged + (1 - ema_decay) * current
-        )
+        # multi_avg_fn modifies averaged in-place with EMA update
+        def ema_avg(averaged_param_list, current_param_list, num_averaged):
+            for averaged_param, current_param in zip(averaged_param_list, current_param_list):
+                averaged_param.mul_(ema_decay).add_(current_param, alpha=1 - ema_decay)
+
+        self.ema = AveragedModel(model, multi_avg_fn=ema_avg)
 
     def train_step_deep_supervision(
         self,
