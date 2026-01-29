@@ -6,6 +6,8 @@ from typing import List
 import torch
 from torch.utils.data import Dataset
 
+from .augmentation import AugmentationPipeline
+
 
 class ARCDataset(Dataset):
     """PyTorch Dataset for ARC-AGI tasks.
@@ -96,4 +98,76 @@ class ARCDataset(Dataset):
             "train_outputs": train_outputs,
             "test_inputs": test_inputs,
             "test_outputs": test_outputs,
+        }
+
+
+class AugmentedARCDataset(Dataset):
+    """ARC dataset with on-the-fly augmentation.
+
+    Wraps ARCDataset and applies augmentation during __getitem__.
+    Each call to __getitem__ produces a different augmented version,
+    effectively creating infinite training data from finite tasks.
+    """
+
+    def __init__(
+        self,
+        data_dir: str,
+        split: str = "training",
+        enable_d8: bool = True,
+        enable_color: bool = True,
+    ):
+        """Initialize augmented dataset.
+
+        Args:
+            data_dir: Path to data/ directory containing training/ and evaluation/
+            split: Either "training" or "evaluation"
+            enable_d8: Whether to apply D8 geometric transforms
+            enable_color: Whether to apply color permutations
+        """
+        self.base_dataset = ARCDataset(data_dir, split)
+        self.pipeline = AugmentationPipeline(
+            enable_d8=enable_d8,
+            enable_color=enable_color,
+        )
+
+    def __len__(self) -> int:
+        """Return number of tasks in dataset."""
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx: int) -> dict:
+        """Get a single augmented task by index.
+
+        Each call applies FRESH random augmentation, so the same idx
+        called multiple times will return different augmented versions.
+
+        Args:
+            idx: Task index
+
+        Returns:
+            Dictionary containing augmented grids with same structure as ARCDataset
+        """
+        item = self.base_dataset[idx]
+
+        # Augment each train pair
+        augmented_train_inputs = []
+        augmented_train_outputs = []
+        for inp, out in zip(item["train_inputs"], item["train_outputs"]):
+            aug_inp, aug_out = self.pipeline.augment_pair(inp, out)
+            augmented_train_inputs.append(aug_inp)
+            augmented_train_outputs.append(aug_out)
+
+        # Augment each test pair with SAME augmentation per pair
+        augmented_test_inputs = []
+        augmented_test_outputs = []
+        for inp, out in zip(item["test_inputs"], item["test_outputs"]):
+            aug_inp, aug_out = self.pipeline.augment_pair(inp, out)
+            augmented_test_inputs.append(aug_inp)
+            augmented_test_outputs.append(aug_out)
+
+        return {
+            "task_id": item["task_id"],
+            "train_inputs": augmented_train_inputs,
+            "train_outputs": augmented_train_outputs,
+            "test_inputs": augmented_test_inputs,
+            "test_outputs": augmented_test_outputs,
         }
