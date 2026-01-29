@@ -160,7 +160,7 @@ class TestEvaluateBatch:
         """Should return predictions, per-sample accuracy, and mean accuracy."""
         # Arrange: Simple mock model
         class MockModel:
-            def forward(self, x):
+            def __call__(self, x):
                 B, H, W = x.shape
                 logits = torch.zeros(B, H, W, 10)
                 logits[:, :, :, 5] = 10.0  # Predict 5 everywhere
@@ -192,7 +192,7 @@ class TestEvaluateBatch:
             def __init__(self):
                 self.param = torch.nn.Parameter(torch.ones(1))
 
-            def forward(self, x):
+            def __call__(self, x):
                 B, H, W = x.shape
                 logits = torch.zeros(B, H, W, 10)
                 logits[:, :, :, 5] = self.param * 10.0
@@ -215,7 +215,7 @@ class TestEvaluateBatch:
         """Mean accuracy should be average of per-sample accuracies."""
         # Arrange: Model that predicts different things
         class MockModel:
-            def forward(self, x):
+            def __call__(self, x):
                 B, H, W = x.shape
                 logits = torch.zeros(B, H, W, 10)
                 # Sample 0: predict 5
